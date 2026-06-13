@@ -1,3 +1,5 @@
+console.log("BRIDGE VERSION 2 LOADED");
+
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
