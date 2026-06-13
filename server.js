@@ -1,8 +1,9 @@
-console.log("BRIDGE VERSION 2 LOADED");
+console.log("BRIDGE VERSION 3 LOADED");
 
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
+const axios = require("axios");
 
 const app = express();
 const server = http.createServer(app);
@@ -16,101 +17,120 @@ const wss = new WebSocket.Server({
   path: "/media",
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", async (ws) => {
   console.log("Exotel connected");
-  console.log("CONNECTED");
 
-  let streamSid = null;
+  let vapiWs = null;
 
-  // --- VAPI WEBSOCKET SETUP ---
-  // Aapka example API Key yahan use kiya gaya hai
-  const vapiWs = new WebSocket("wss://api.vapi.ai/call/web", {
-    headers: {
-      Authorization: "bc7a084c-cdb4-4bb6-baf1-8b8247a58f7d" // API Key
-    }
-  });
-
-  vapiWs.on("open", () => {
-    console.log("Connected to Vapi AI");
-
-    // Vapi se connect hote hi Assistant start karne ka command
-    const startMessage = {
-      type: "start",
-      assistantId: "d7fdd364-4ac1-459f-a8ac-3702535dba07" // Aapka example Assistant ID
-    };
-    
-    vapiWs.send(JSON.stringify(startMessage));
-    console.log("Start event sent to Vapi");
-  });
-
-  // 1. VAPI SE AAWAZ AAYEGI -> EXOTEL KO BHEJENGE
-  vapiWs.on("message", (vapiMessage) => {
+  ws.on("message", async (message) => {
     try {
-      const vapiData = JSON.parse(vapiMessage);
-      
-      if (vapiData.type === "audio" && vapiData.data) {
-        if (streamSid) {
-          const exotelMediaMessage = {
-            event: "media",
-            streamSid: streamSid,
-            media: {
-              payload: vapiData.data // AI ki aawaz (Base64)
+      const data = JSON.parse(message.toString());
+
+      // START EVENT
+      if (data.event === "start") {
+        console.log("CONNECTED");
+        console.log("START EVENT");
+        console.log(JSON.stringify(data, null, 2));
+
+        try {
+          const response = await axios.post(
+            "https://api.vapi.ai/call",
+            {
+              assistantId: process.env.VAPI_ASSISTANT_ID,
+              transport: {
+                provider: "vapi.websocket",
+              },
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
+                "Content-Type": "application/json",
+              },
             }
-          };
-          ws.send(JSON.stringify(exotelMediaMessage));
+          );
+
+          const vapiUrl =
+            response.data.transport.websocketCallUrl;
+
+          console.log("Vapi WS URL:", vapiUrl);
+
+          vapiWs = new WebSocket(vapiUrl);
+
+          vapiWs.on("open", () => {
+            console.log("Connected to Vapi");
+          });
+
+          vapiWs.on("message", (msg) => {
+            console.log(
+              "Message from Vapi",
+              msg.toString().substring(0, 500)
+            );
+          });
+
+          vapiWs.on("close", () => {
+            console.log("Vapi disconnected");
+          });
+
+          vapiWs.on("error", (err) => {
+            console.log("Vapi Error:", err.message);
+          });
+
+        } catch (err) {
+          console.log(
+            "Vapi Create Call Error:",
+            err.response?.data || err.message
+          );
         }
-      } else {
-        // Audio ke alawa koi event ho toh console me dikhayega
-        console.log("Vapi Event:", vapiData.type);
       }
-    } catch (e) {
-      console.error("Error processing Vapi message", e);
-    }
-  });
 
-  vapiWs.on("error", (error) => {
-    console.error("Vapi WebSocket Error:", error);
-  });
+      // MEDIA EVENT
+      if (data.event === "media") {
+        console.log("MEDIA EVENT RECEIVED");
 
-  // --- EXOTEL WEBSOCKET SETUP ---
-  ws.on("message", (message) => {
-    const msg = message.toString();
+        console.log(
+          "MEDIA SAMPLE:",
+          JSON.stringify(data).substring(0, 500)
+        );
 
-    // 1. Start Event (Stream ID save karne ke liye)
-    if (msg.includes('"event":"start"')) {
-      console.log("START EVENT RECEIVED");
-      const data = JSON.parse(msg);
-      streamSid = data.start.streamSid; 
-    }
+        if (
+          vapiWs &&
+          vapiWs.readyState === WebSocket.OPEN &&
+          data.media &&
+          data.media.payload
+        ) {
+          const audioBuffer = Buffer.from(
+            data.media.payload,
+            "base64"
+          );
 
-    // 2. EXOTEL SE AAWAZ AAYEGI -> VAPI KO BHEJENGE
-    if (msg.includes('"event":"media"')) {
-      try {
-        const data = JSON.parse(msg);
-        
-        if (vapiWs.readyState === WebSocket.OPEN && data.media && data.media.payload) {
-           const vapiAudioMessage = {
-             type: "audio", 
-             data: data.media.payload // Customer ki aawaz (Base64)
-           };
-           vapiWs.send(JSON.stringify(vapiAudioMessage));
+          console.log(
+            "Sending bytes:",
+            audioBuffer.length
+          );
+
+          vapiWs.send(audioBuffer);
         }
-      } catch (e) {
-        console.error("Error handling Exotel media", e);
       }
+
+      // STOP EVENT
+      if (data.event === "stop") {
+        console.log("STOP EVENT");
+
+        if (vapiWs) {
+          vapiWs.close();
+        }
+      }
+
+    } catch (err) {
+      console.log("RAW:", message.toString());
     }
   });
 
   ws.on("close", () => {
-    console.log("Exotel Connection closed");
-    if (vapiWs.readyState === WebSocket.OPEN) {
-      vapiWs.close(); // Exotel call cut hone par Vapi connection bhi band karein
-    }
+    console.log("Connection closed");
   });
 });
 
-// Server start karne ka code
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log("Server started on port", PORT);
+server.listen(process.env.PORT || 3000, () => {
+  console.log("Server started");
 });
