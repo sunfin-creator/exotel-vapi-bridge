@@ -56,12 +56,24 @@ wss.on("connection", async (ws) => {
     });
 
     vapiWs.on("message", (msg) => {
-      console.log("Message from Vapi");
 
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(msg);
-      }
-    });
+  if (Buffer.isBuffer(msg)) {
+    console.log(
+      "AUDIO FROM VAPI:",
+      msg.length,
+      "bytes"
+    );
+  } else {
+    console.log(
+      "TEXT FROM VAPI:",
+      msg.toString()
+    );
+  }
+
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(msg);
+  }
+});
 
     vapiWs.on("close", () => {
       console.log("Vapi socket closed");
