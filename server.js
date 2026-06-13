@@ -1,4 +1,4 @@
-console.log("BRIDGE VERSION 3 LOADED");
+console.log("BRIDGE VERSION 6 (EXOTEL JSON FIX) LOADED");
 
 const express = require("express");
 const http = require("http");
@@ -12,8 +12,6 @@ app.get("/", (req, res) => {
   res.send("Exotel Vapi Bridge Running");
 });
 
-let vapiWs = null;
-
 const wss = new WebSocket.Server({
   server,
   path: "/media",
@@ -22,11 +20,15 @@ const wss = new WebSocket.Server({
 wss.on("connection", async (ws) => {
   console.log("Exotel connected");
 
+  let vapiWs = null;
+  // Exotel ko aawaz wapas bhejne ke liye stream_sid save karna zaroori hai
+  let exotelStreamSid = null; 
+
   try {
     const response = await axios.post(
       "https://api.vapi.ai/call",
       {
-        assistantId: process.env.VAPI_ASSISTANT_ID,
+        assistantId: process.env.VAPI_ASSISTANT_ID, 
         transport: {
           provider: "vapi.websocket",
           audioFormat: {
@@ -44,9 +46,7 @@ wss.on("connection", async (ws) => {
       }
     );
 
-    const vapiUrl =
-      response.data.transport.websocketCallUrl;
-
+    const vapiUrl = response.data.transport.websocketCallUrl;
     console.log("Vapi WS URL:", vapiUrl);
 
     vapiWs = new WebSocket(vapiUrl);
@@ -55,25 +55,24 @@ wss.on("connection", async (ws) => {
       console.log("Connected to Vapi");
     });
 
+    // 1. VAPI SE AAWAZ AAYEGI -> EXOTEL KO BHEJENGE
     vapiWs.on("message", (msg) => {
-
-  if (Buffer.isBuffer(msg)) {
-    console.log(
-      "AUDIO FROM VAPI:",
-      msg.length,
-      "bytes"
-    );
-  } else {
-    console.log(
-      "TEXT FROM VAPI:",
-      msg.toString()
-    );
-  }
-
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(msg);
-  }
-});
+      if (Buffer.isBuffer(msg)) {
+        // YAHAN FIX KIYA GAYA HAI: Vapi ki raw bytes ko Base64 me convert karke JSON me lapeta
+        if (ws.readyState === WebSocket.OPEN && exotelStreamSid) {
+          const exotelMediaMessage = {
+            event: "media",
+            stream_sid: exotelStreamSid,
+            media: {
+              payload: msg.toString("base64")
+            }
+          };
+          ws.send(JSON.stringify(exotelMediaMessage));
+        }
+      } else {
+        console.log("TEXT FROM VAPI:", msg.toString());
+      }
+    });
 
     vapiWs.on("close", () => {
       console.log("Vapi socket closed");
@@ -90,47 +89,28 @@ wss.on("connection", async (ws) => {
     );
   }
 
+  // 2. EXOTEL SE AAWAZ AAYEGI -> VAPI KO BHEJENGE
   ws.on("message", (message) => {
     try {
       const data = JSON.parse(message.toString());
 
       if (data.event === "start") {
         console.log("START EVENT");
-        console.log(JSON.stringify(data, null, 2));
+        // Yahan Exotel ka stream_sid capture kar liya
+        exotelStreamSid = data.start.stream_sid; 
+        console.log("Stream SID Saved:", exotelStreamSid);
       }
 
       if (data.event === "media") {
-        console.log("MEDIA EVENT RECEIVED");
-
-        console.log(
-          "VAPI STATUS:",
-          vapiWs ? vapiWs.readyState : "NO SOCKET"
-        );
-
-        console.log(
-          "HAS PAYLOAD:",
-          !!(data.media && data.media.payload)
-        );
-
         if (
           vapiWs &&
           vapiWs.readyState === WebSocket.OPEN &&
           data.media &&
           data.media.payload
         ) {
-          const audioBuffer = Buffer.from(
-            data.media.payload,
-            "base64"
-          );
-
-          console.log(
-            "Sending bytes:",
-            audioBuffer.length
-          );
-
+          // Exotel Base64 bhejta hai, hum use wapas Buffer (Raw Binary) banakar Vapi ko bhej rahe hain
+          const audioBuffer = Buffer.from(data.media.payload, "base64");
           vapiWs.send(audioBuffer);
-        } else {
-          console.log("NOT SENDING AUDIO");
         }
       }
 
@@ -145,7 +125,6 @@ wss.on("connection", async (ws) => {
 
   ws.on("close", () => {
     console.log("Connection closed");
-
     if (vapiWs) {
       vapiWs.close();
     }
