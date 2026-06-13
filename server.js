@@ -18,9 +18,15 @@ const wss = new WebSocket.Server({
 
 wss.on("connection", (ws) => {
   console.log("Exotel connected");
+  console.log("CONNECTED"); // Yahan ek line add ki gayi hai
 
   ws.on("message", (message) => {
-    console.log("RAW:", message.toString());
+    const msg = message.toString();
+
+    if (msg.includes('"event":"start"')) {
+      console.log("START EVENT:");
+      console.log(msg);
+    }
   });
 
   ws.on("close", () => {
