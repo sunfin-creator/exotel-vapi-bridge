@@ -32,7 +32,7 @@ wss.on("connection", async (ws) => {
         transport: {
           provider: "vapi.websocket",
           audioFormat: {
-            format: "mulaw",
+            format: "pcm16",
             container: "raw",
             sampleRate: 8000,
           },
