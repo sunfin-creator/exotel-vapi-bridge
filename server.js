@@ -36,14 +36,14 @@ wss.on("connection", async (ws) => {
           const response = await axios.post(
             "https://api.vapi.ai/call",
             {
-              assistantId: process.env. d7fdd364-4ac1-459f-a8ac-3702535dba07,
+              assistantId: process.env.VAPI_ASSISTANT_ID,
               transport: {
                 provider: "vapi.websocket",
               },
             },
             {
               headers: {
-                Authorization: `Bearer ${process.env.bc7a084c-cdb4-4bb6-baf1-8b8247a58f7d}`,
+                Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
                 "Content-Type": "application/json",
               },
             }
