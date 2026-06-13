@@ -54,7 +54,7 @@ wss.on("connection", (ws) => {
   // --- VAPI WEBSOCKET SETUP ---
   const vapiWs = new WebSocket("wss://api.vapi.ai/call/web", {
     headers: {
-      Authorization: "bc7a084c-cdb4-4bb6-baf1-8b8247a58f7d" // TODO: APNI ASLI VAPI KEY YAHA DALEIN
+      Authorization: "Bearer bc7a084c-cdb4-4bb6-baf1-8b8247a58f7d" // TODO: APNI ASLI VAPI KEY YAHA DALEIN
     }
   });
 
