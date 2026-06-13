@@ -1,141 +1,157 @@
-console.log("BRIDGE VERSION 4 (PUBLIC KEY FIX) LOADED");
+console.log("BRIDGE VERSION 3 LOADED");
 
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
+const axios = require("axios");
 
 const app = express();
 const server = http.createServer(app);
 
-// --- AUDIO CONVERTER FUNCTIONS ---
-function upsample8to16(buffer) {
-  const length = buffer.length % 2 === 0 ? buffer.length : buffer.length - 1;
-  const out = Buffer.alloc(length * 2);
-  let outIdx = 0;
-  for (let i = 0; i < length; i += 2) {
-    const b1 = buffer[i];
-    const b2 = buffer[i + 1];
-    out[outIdx++] = b1;
-    out[outIdx++] = b2;
-    out[outIdx++] = b1; // Speed double karne ke liye duplicate
-    out[outIdx++] = b2;
-  }
-  return out;
-}
-
-function downsample16to8(buffer) {
-  const length = buffer.length % 2 === 0 ? buffer.length : buffer.length - 1;
-  const out = Buffer.alloc(Math.floor(length / 4) * 2);
-  let outIdx = 0;
-  for (let i = 0; i < length; i += 4) {
-    out[outIdx++] = buffer[i]; // Speed aadhi karne ke liye skip
-    out[outIdx++] = buffer[i + 1];
-  }
-  return out;
-}
-// ----------------------------------
-
 app.get("/", (req, res) => {
-  res.send("Exotel Vapi Bridge Running - Version 4");
+  res.send("Exotel Vapi Bridge Running");
 });
+
+let vapiWs = null;
 
 const wss = new WebSocket.Server({
   server,
   path: "/media",
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", async (ws) => {
   console.log("Exotel connected");
 
-  let exotelStreamSid = null;
-
-  // --- VAPI WEBSOCKET SETUP ---
-  const vapiWs = new WebSocket("wss://api.vapi.ai/call/web", {
-    headers: {
-      // DHYAN DEIN: Yahan sirf apni 'PUBLIC' API Key daalni hai (Private nahi)
-      Authorization: "",
-      "User-Agent": "Mozilla/5.0" 
-    }
-  });
-
-  vapiWs.on("open", () => {
-    console.log("Connected to Vapi AI");
-    const startMessage = {
-      type: "start",
-      assistantId: "" // Aapka Sunita Finlease Agent ID
-    };
-    vapiWs.send(JSON.stringify(startMessage));
-  });
-
-  // 1. VAPI SE AAWAZ AAYEGI -> EXOTEL KO BHEJENGE
-  vapiWs.on("message", (vapiMessage) => {
-    try {
-      const vapiData = JSON.parse(vapiMessage);
-
-      if (vapiData.type === "audio" && vapiData.data) {
-        if (exotelStreamSid) {
-          const vapiBuffer = Buffer.from(vapiData.data, 'base64');
-          const exotelBuffer = downsample16to8(vapiBuffer);
-
-          const exotelMediaMessage = {
-            event: "media",
-            stream_sid: exotelStreamSid,
-            media: {
-              payload: exotelBuffer.toString('base64')
-            }
-          };
-          ws.send(JSON.stringify(exotelMediaMessage));
-        }
+  try {
+    const response = await axios.post(
+      "https://api.vapi.ai/call",
+      {
+        assistantId: process.env.VAPI_ASSISTANT_ID,
+        transport: {
+          provider: "vapi.websocket",
+          audioFormat: {
+            format: "mulaw",
+            container: "raw",
+            sampleRate: 8000,
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
       }
-    } catch (e) {
-      console.error("Error processing Vapi message", e);
-    }
-  });
+    );
 
-  vapiWs.on("error", (error) => {
-    console.error("Vapi WebSocket Error:", error);
-  });
+    const vapiUrl =
+      response.data.transport.websocketCallUrl;
 
-  // --- EXOTEL SE AAWAZ AAYEGI -> VAPI KO BHEJENGE ---
+    console.log("Vapi WS URL:", vapiUrl);
+
+    vapiWs = new WebSocket(vapiUrl);
+
+    vapiWs.on("open", () => {
+      console.log("Connected to Vapi");
+    });
+
+    vapiWs.on("message", (msg) => {
+
+  if (Buffer.isBuffer(msg)) {
+    console.log(
+      "AUDIO FROM VAPI:",
+      msg.length,
+      "bytes"
+    );
+  } else {
+    console.log(
+      "TEXT FROM VAPI:",
+      msg.toString()
+    );
+  }
+
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(msg);
+  }
+});
+
+    vapiWs.on("close", () => {
+      console.log("Vapi socket closed");
+    });
+
+    vapiWs.on("error", (err) => {
+      console.log("Vapi error:", err.message);
+    });
+
+  } catch (err) {
+    console.log(
+      "Vapi Call Creation Failed:",
+      err.response?.data || err.message
+    );
+  }
+
   ws.on("message", (message) => {
-    const msg = message.toString();
+    try {
+      const data = JSON.parse(message.toString());
 
-    if (msg.includes('"event":"start"')) {
-      console.log("START EVENT RECEIVED");
-      const data = JSON.parse(msg);
-      exotelStreamSid = data.start.stream_sid || data.start.streamSid; 
-      console.log("Stream SID Saved:", exotelStreamSid);
-    }
-
-    if (msg.includes('"event":"media"')) {
-      try {
-        const data = JSON.parse(msg);
-
-        if (vapiWs.readyState === WebSocket.OPEN && data.media && data.media.payload) {
-           const exotelBuffer = Buffer.from(data.media.payload, 'base64');
-           const vapiBuffer = upsample8to16(exotelBuffer);
-
-           const vapiAudioMessage = {
-             type: "audio",
-             data: vapiBuffer.toString('base64')
-           };
-           vapiWs.send(JSON.stringify(vapiAudioMessage));
-        }
-      } catch (e) {
-        // Console spam rokne ke liye ignore kiya
+      if (data.event === "start") {
+        console.log("START EVENT");
+        console.log(JSON.stringify(data, null, 2));
       }
+
+      if (data.event === "media") {
+        console.log("MEDIA EVENT RECEIVED");
+
+        console.log(
+          "VAPI STATUS:",
+          vapiWs ? vapiWs.readyState : "NO SOCKET"
+        );
+
+        console.log(
+          "HAS PAYLOAD:",
+          !!(data.media && data.media.payload)
+        );
+
+        if (
+          vapiWs &&
+          vapiWs.readyState === WebSocket.OPEN &&
+          data.media &&
+          data.media.payload
+        ) {
+          const audioBuffer = Buffer.from(
+            data.media.payload,
+            "base64"
+          );
+
+          console.log(
+            "Sending bytes:",
+            audioBuffer.length
+          );
+
+          vapiWs.send(audioBuffer);
+        } else {
+          console.log("NOT SENDING AUDIO");
+        }
+      }
+
+      if (data.event === "stop") {
+        console.log("STOP EVENT");
+      }
+
+    } catch (err) {
+      console.log("RAW:", message.toString());
     }
   });
 
   ws.on("close", () => {
-    console.log("Exotel Connection closed");
-    if (vapiWs.readyState === WebSocket.OPEN) {
+    console.log("Connection closed");
+
+    if (vapiWs) {
       vapiWs.close();
     }
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log("Server started on port", PORT);
+server.listen(process.env.PORT || 3000, () => {
+  console.log("Server started");
 });
