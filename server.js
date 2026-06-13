@@ -53,7 +53,7 @@ wss.on("connection", (ws) => {
   const vapiWs = new WebSocket("wss://api.vapi.ai/call/web", {
     headers: {
       // DHYAN DEIN: Yahan sirf apni 'PUBLIC' API Key daalni hai (Private nahi)
-      Authorization: "Bearer 53c5cc49-ed62-49ea-8d40-ea5c95320523",
+      Authorization: "",
       "User-Agent": "Mozilla/5.0" 
     }
   });
@@ -62,7 +62,7 @@ wss.on("connection", (ws) => {
     console.log("Connected to Vapi AI");
     const startMessage = {
       type: "start",
-      assistantId: "d7fdd364-4ac1-459f-a8ac-3702535dba07" // Aapka Sunita Finlease Agent ID
+      assistantId: "" // Aapka Sunita Finlease Agent ID
     };
     vapiWs.send(JSON.stringify(startMessage));
   });
