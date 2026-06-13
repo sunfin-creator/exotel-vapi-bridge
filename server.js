@@ -31,9 +31,9 @@ wss.on("connection", async (ws) => {
         transport: {
           provider: "vapi.websocket",
           audioFormat: {
-            format: "mulaw", // Exotel ka sahi format yahi hai
+            format: "pcm16", // Exotel ka sahi format yahi hai
             container: "raw",
-            sampleRate: 8000,
+            sampleRate: 16000,
           },
         },
       },
