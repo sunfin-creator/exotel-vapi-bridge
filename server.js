@@ -1,4 +1,4 @@
-console.log("BRIDGE VERSION 6 (EXOTEL JSON FIX) LOADED");
+console.log("BRIDGE VERSION 7 (JSON AUDIO FIX) LOADED");
 
 const express = require("express");
 const http = require("http");
@@ -9,7 +9,7 @@ const app = express();
 const server = http.createServer(app);
 
 app.get("/", (req, res) => {
-  res.send("Exotel Vapi Bridge Running");
+  res.send("Exotel Vapi Bridge Running - Version 7");
 });
 
 const wss = new WebSocket.Server({
@@ -21,7 +21,6 @@ wss.on("connection", async (ws) => {
   console.log("Exotel connected");
 
   let vapiWs = null;
-  // Exotel ko aawaz wapas bhejne ke liye stream_sid save karna zaroori hai
   let exotelStreamSid = null; 
 
   try {
@@ -32,7 +31,7 @@ wss.on("connection", async (ws) => {
         transport: {
           provider: "vapi.websocket",
           audioFormat: {
-            format: "pcm16",
+            format: "mulaw", // Exotel ka sahi format yahi hai
             container: "raw",
             sampleRate: 8000,
           },
@@ -57,20 +56,34 @@ wss.on("connection", async (ws) => {
 
     // 1. VAPI SE AAWAZ AAYEGI -> EXOTEL KO BHEJENGE
     vapiWs.on("message", (msg) => {
-      if (Buffer.isBuffer(msg)) {
-        // YAHAN FIX KIYA GAYA HAI: Vapi ki raw bytes ko Base64 me convert karke JSON me lapeta
-        if (ws.readyState === WebSocket.OPEN && exotelStreamSid) {
+      try {
+        // Fix: Vapi se aane wale Text (JSON) ko proper kholna
+        const vapiData = JSON.parse(msg.toString());
+        
+        let audioBase64 = null;
+        
+        // Vapi ki JSON file se sirf aawaz (base64) ko alag nikalna
+        if (vapiData.type === "audio" && vapiData.data) {
+            audioBase64 = vapiData.data;
+        } else if (vapiData.type === "message" && vapiData.message && vapiData.message.type === "audio") {
+            audioBase64 = vapiData.message.data;
+        } else {
+            console.log("Vapi Event Received:", vapiData.type);
+        }
+
+        // Exotel ko bina text ke sirf pure aawaz bhejna
+        if (audioBase64 && ws.readyState === WebSocket.OPEN && exotelStreamSid) {
           const exotelMediaMessage = {
             event: "media",
             stream_sid: exotelStreamSid,
             media: {
-              payload: msg.toString("base64")
+              payload: audioBase64 // Ab koi shor nahi aayega!
             }
           };
           ws.send(JSON.stringify(exotelMediaMessage));
         }
-      } else {
-        console.log("TEXT FROM VAPI:", msg.toString());
+      } catch (e) {
+        // Agar parser fail ho jaye, toh ise ignore karein
       }
     });
 
@@ -83,10 +96,7 @@ wss.on("connection", async (ws) => {
     });
 
   } catch (err) {
-    console.log(
-      "Vapi Call Creation Failed:",
-      err.response?.data || err.message
-    );
+    console.log("Vapi Call Creation Failed:", err.response?.data || err.message);
   }
 
   // 2. EXOTEL SE AAWAZ AAYEGI -> VAPI KO BHEJENGE
@@ -95,36 +105,33 @@ wss.on("connection", async (ws) => {
       const data = JSON.parse(message.toString());
 
       if (data.event === "start") {
-        console.log("START EVENT");
-        // Yahan Exotel ka stream_sid capture kar liya
-        exotelStreamSid = data.start.stream_sid; 
+        console.log("START EVENT RECEIVED");
+        exotelStreamSid = data.start.stream_sid || data.start.streamSid; 
         console.log("Stream SID Saved:", exotelStreamSid);
       }
 
       if (data.event === "media") {
-        if (
-          vapiWs &&
-          vapiWs.readyState === WebSocket.OPEN &&
-          data.media &&
-          data.media.payload
-        ) {
-          // Exotel Base64 bhejta hai, hum use wapas Buffer (Raw Binary) banakar Vapi ko bhej rahe hain
-          const audioBuffer = Buffer.from(data.media.payload, "base64");
-          vapiWs.send(audioBuffer);
+        if (vapiWs && vapiWs.readyState === WebSocket.OPEN && data.media && data.media.payload) {
+          
+          // Fix: Exotel ki aawaz ko JSON me lapet kar Vapi ko bhejna taaki AI use samajh sake
+          const vapiAudioMessage = {
+            type: "message",
+            message: {
+              type: "audio",
+              data: data.media.payload
+            }
+          };
+          vapiWs.send(JSON.stringify(vapiAudioMessage));
+          
         }
       }
-
-      if (data.event === "stop") {
-        console.log("STOP EVENT");
-      }
-
     } catch (err) {
-      console.log("RAW:", message.toString());
+      // ignore
     }
   });
 
   ws.on("close", () => {
-    console.log("Connection closed");
+    console.log("Exotel Connection closed");
     if (vapiWs) {
       vapiWs.close();
     }
