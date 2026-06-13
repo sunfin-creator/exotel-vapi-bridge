@@ -27,14 +27,14 @@ wss.on("connection", async (exotelWs) => {
     const response = await axios.post(
       "https://api.vapi.ai/call",
       {
-        assistantId: VAPI_ASSISTANT_ID,
+        assistantId: d7fdd364-4ac1-459f-a8ac-3702535dba07,
         transport: {
           provider: "vapi.websocket"
         }
       },
       {
         headers: {
-          Authorization: `Bearer ${VAPI_API_KEY}`,
+          Authorization: `Bearer ${bc7a084c-cdb4-4bb6-baf1-8b8247a58f7d}`,
           "Content-Type": "application/json"
         }
       }
