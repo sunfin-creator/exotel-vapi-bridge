@@ -29,7 +29,7 @@ wss.on("connection", async (ws) => {
           audioFormat: {
             format: "pcm_s16le",  // Sahi Vapi format
             container: "raw",
-            sampleRate: 16000,    // Exotel se match kiya hua rate
+            sampleRate: 8000,    // Exotel se match kiya hua rate
           },
         },
       },
